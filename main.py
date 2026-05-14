@@ -145,7 +145,7 @@ def get_inbox(user_id: int, unread_only: bool = Query(False), limit: int = Query
         query = query.where(text("is_read = 0"))
     if search:
         # Use text with bindparam to avoid SQL injection
-        query = query.where(text("subject LIKE '%' || :search || '%'")).bindparams(search=search)
+        query = query.where(text("subject LIKE '%' || :search || '%'").bindparams(search=search))
     query = query.order_by(text("created_at DESC")).offset(offset).limit(limit)
     messages = session.exec(query).all()
     return messages
