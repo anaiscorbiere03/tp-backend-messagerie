@@ -1,0 +1,296 @@
+<!doctype html>
+<html>
+  <head>
+    <style>
+      body:has(h1 > span.on) {
+        background-color: #f1f8e9;
+        & h1 > span.on::after {
+          content: " (ON)";
+        }
+      }
+      body:has(h1 > span.off) {
+        background-color: #fff0f0;
+        & h1 > span.off::after {
+          content: " (OFF)";
+        }
+      }
+      #meta {
+        color: gray;
+        font-size: 0.8em;
+      }
+      .tab {
+        overflow: hidden;
+        border: 1px solid #ccc;
+        background-color: #f1f1f1;
+      }
+      .tab button {
+        background-color: inherit;
+        float: left;
+        border: none;
+        outline: none;
+        cursor: pointer;
+        padding: 14px 16px;
+        transition: 0.3s;
+      }
+      .tab button:hover {
+        background-color: #ddd;
+      }
+      .tab button.active {
+        background-color: #ccc;
+      }
+      .tabcontent {
+        display: none;
+        padding: 6px 12px;
+        border: 1px solid #ccc;
+        border-top: none;
+      }
+      .message-item {
+        border-bottom: 1px solid #eee;
+        padding: 10px;
+        cursor: pointer;
+      }
+      .message-item.unread .unread-dot {
+        display: inline;
+        color: blue;
+        margin-right: 5px;
+      }
+      .message-item .unread-dot {
+        display: none;
+      }
+      .hidden {
+        display: none;
+      }
+    </style>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        // Generate a random ID so we can see who "flipped the switch"
+        const myId = "User-" + Math.floor(Math.random() * 1000);
+        const ws = new WebSocket(`ws://localhost:8000/ws/${myId}`);
+
+        let currentUser = null;
+
+        // Messages in memory
+        let inboxMessages = [];
+        let sentMessages = [];
+
+        function displayInbox() {
+          const inbox = document.getElementById("inbox");
+          inbox.innerHTML = "";
+          inboxMessages.slice().reverse().forEach((msg, index) => {
+            const div = document.createElement("div");
+            div.className = msg.read ? "message-item" : "message-item unread";
+            div.innerHTML = `<span class="unread-dot">●</span><strong>${msg.subject}</strong> from ${msg.sender} at ${msg.time}`;
+            div.onclick = () => {
+              msg.read = true;
+              displayInbox();
+              alert(`Message: ${msg.message}`);
+            };
+            inbox.appendChild(div);
+          });
+        }
+
+        function displaySent() {
+          const sent = document.getElementById("sent");
+          sent.innerHTML = "";
+          sentMessages.forEach(msg => {
+            const div = document.createElement("div");
+            div.className = "message-item";
+            div.innerHTML = `<strong>${msg.subject}</strong> to ${msg.recipient} at ${msg.time}`;
+            sent.appendChild(div);
+          });
+        }
+
+        ws.onmessage = (event) => {
+          // Parse the JSON string back into a JS Object
+          const data = JSON.parse(event.data);
+          console.log(data);
+
+          const action= data.action;
+          if (action=="newuser"){
+            const newUserName=data.userName;
+            const ul=document.getElementById("allUsers");
+            const li=document.createElement("li");
+            li.innerText=newUserName;
+            ul.appendChild(li);
+          } else if (action=="userlist"){
+            const ul=document.getElementById("allUsers");
+            ul.innerHTML = ""; // Clear existing
+            data.users.forEach(user => {
+              const li=document.createElement("li");
+              li.innerText=user;
+              ul.appendChild(li);
+            });
+          } else if (action=="message"){
+            inboxMessages.push({
+              subject: data.subject || "No subject",
+              sender: data.sender,
+              message: data.message,
+              time: data.time,
+              read: false
+            });
+            displayInbox();
+          } else if (action=="history"){
+            inboxMessages = data.inbox.map(msg => ({
+              ...msg,
+              read: msg.read ?? false
+            }));
+            sentMessages = data.sent;
+            displayInbox();
+            displaySent();
+          } else if (action=="error"){
+            alert(data.message);
+          }
+
+          // Update the UI
+          document.getElementById("meta").innerText =
+            `Last updated by ${data.sender} at ${data.time}`;
+          const statusText = document.getElementById("statusText")
+          statusText.className = data.status === "on" ? "on" : "off";
+          console.log("Class set to", statusText.className);
+        };
+
+        function toggle() {
+          const current = document.getElementById("statusText").className;
+          const nextStatus = current === "on" ? "off" : "on";
+
+          // Send a JSON object as a string
+          const payload = {action: "toggle" , status: nextStatus };
+          ws.send(JSON.stringify(payload));
+        }
+        document.getElementById("toggle").addEventListener("click", toggle);
+
+        let currentEmail = null;
+
+        const setUsername=()=>{
+          if (currentUser) {
+            alert("Username already set. You cannot change it.");
+            return;
+          }
+          const usernameInput = document.getElementById("userName");
+          const emailInput = document.getElementById("userEmail");
+          const username = usernameInput.value.trim();
+          const email = emailInput.value.trim();
+          if (!username) {
+            alert("Please enter a username.");
+            return;
+          }
+          if (!email) {
+            alert("Please enter an email address.");
+            return;
+          }
+          const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+          if (!emailPattern.test(email)) {
+            alert("Please enter a valid email address.");
+            return;
+          }
+          currentUser = username;
+          currentEmail = email;
+          const data = {action : "setusername", data: currentUser};
+          ws.send(JSON.stringify(data));
+          usernameInput.disabled = true;
+          emailInput.disabled = true;
+          document.getElementById("setUsername").disabled = true;
+          document.getElementById("connectedAs").innerText = `Connected as ${currentUser}`;
+          showMessageSection();
+        }
+        document.getElementById("setUsername").addEventListener("click", setUsername);
+
+        const sendMessage=()=>{
+          if (!currentUser) {
+            alert("You must set your username and email before sending messages.");
+            return;
+          }
+          const msgInp = document.getElementById("message");
+          const recInp = document.getElementById("recipient");
+          const subjInp = document.getElementById("subject");
+          const message = msgInp.value;
+          const recipient = recInp.value;
+          const subject = subjInp.value || "No subject";
+          const data = {action: "sendmessage", message: message, recipient: recipient, subject: subject};
+          ws.send(JSON.stringify(data));
+          sentMessages.push({
+            subject: subject,
+            recipient: recipient,
+            message: message,
+            time: new Date().toLocaleTimeString(),
+            sender: currentUser
+          });
+          displaySent();
+        }
+        document.getElementById("sendMessage").addEventListener("click", sendMessage);
+
+        function showMessageSection() {
+          document.getElementById('messageSection').classList.remove('hidden');
+          document.getElementById('toggle').classList.remove('hidden');
+          displayInbox();
+          displaySent();
+        }
+
+        // Initial display
+        displayInbox();
+        displaySent();
+
+      });
+
+      function openTab(evt, tabName) {
+        var i, tabcontent, tablinks;
+        tabcontent = document.getElementsByClassName("tabcontent");
+        for (i = 0; i < tabcontent.length; i++) {
+          tabcontent[i].style.display = "none";
+        }
+        tablinks = document.getElementsByClassName("tablinks");
+        for (i = 0; i < tablinks.length; i++) {
+          tablinks[i].className = tablinks[i].className.replace(" active", "");
+        }
+        document.getElementById(tabName).style.display = "block";
+        evt.currentTarget.className += " active";
+      }
+    </script>
+  </head>
+  <body>
+    <h1>
+      shared status with JSON messages:
+      <span id="statusText" class="off"></span>
+    </h1>
+    <span>Username:</span><input type="text" id="userName"><br>
+    <span>Email:</span><input type="email" id="userEmail"><button id="setUsername">set username</button>
+    <br>
+    <span id="connectedAs" style="margin-left: 10px; color: green;"></span>
+    <br>
+    <br>
+    <div id="messageSection" class="hidden">
+      <span>To:</span><input type="text" id="recipient">
+      <br>
+      <br>
+      <span>Subject:</span><input type="text" id="subject">
+      <br>
+      <br>
+      <span>Message:</span><input type="text" id="message">
+      <button id="sendMessage">Send Message</button>
+
+      <br>
+      <h2>Connected users: </h2>
+      <ul id="allUsers">
+      </ul>
+
+      <div class="tab" id="mailTabs">
+        <button class="tablinks active" onclick="openTab(event, 'Inbox')">Inbox</button>
+        <button class="tablinks" onclick="openTab(event, 'Sent')">Sent</button>
+      </div>
+
+      <div id="Inbox" class="tabcontent" style="display:block;">
+        <h3>Inbox</h3>
+        <div id="inbox"></div>
+      </div>
+
+      <div id="Sent" class="tabcontent">
+        <h3>Sent</h3>
+        <div id="sent"></div>
+      </div>
+
+      <p id="meta">---</p>
+    </div>
+
+    <button id="toggle" class="hidden">Toggle Switch</button>
+  </body>
+</html>
